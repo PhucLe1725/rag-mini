@@ -1,0 +1,50 @@
+# ── Python ────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Virtual environments ───────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── Environment / Secrets ─────────────────────────────────────
+# QUAN TRONG: Khong push credentials len GitHub!
+.env
+
+# ── ChromaDB vector store ─────────────────────────────────────
+# File nay lon (co the > 100MB) va co the rebuild tu PostgreSQL
+# Chay: python scripts/build_product_rag.py de tao lai
+chroma_db/
+
+# ── Data files (co the lon hoac nhay cam) ─────────────────────
+data/ecommerceDataset.csv
+data/*.csv
+data/DB/
+
+# ── IDE & OS ──────────────────────────────────────────────────
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Logs & temp ───────────────────────────────────────────────
+*.log
+*.tmp
+*.bak
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Jupyter (neu co) ──────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
