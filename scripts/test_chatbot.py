@@ -15,7 +15,7 @@ from sentence_transformers import SentenceTransformer
 from openai import OpenAI
 
 # ---- Setup ----
-embed_model = SentenceTransformer("all-MiniLM-L6-v2")
+embed_model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
 client = chromadb.PersistentClient(path=str(ROOT / "chroma_db"))
 col = client.get_collection("products")
 
@@ -25,10 +25,15 @@ chat_client = OpenAI(
 )
 CHAT_MODEL = os.getenv("CHAT_MODEL", "glm-5.2")
 
+MIN_SCORE = 0.30  # Nguong toi thieu — ket qua duoi nguong nay bi loai bo
+
 TEST_QUERIES = [
     "bút gel màu tím giá rẻ",
     "sổ bìa da cho văn phòng",
     "bút chì gỗ 2B có tẩy cho học sinh",
+    "but chi",          # Test khong dau
+    "but chi kim",      # Test khong dau
+    "tẩy chì học sinh", # Test san pham lien quan
 ]
 
 for query in TEST_QUERIES:
@@ -39,7 +44,7 @@ for query in TEST_QUERIES:
     qe = embed_model.encode(query, normalize_embeddings=True).tolist()
     res = col.query(
         query_embeddings=[qe],
-        n_results=3,
+        n_results=20,
         where={"availability": {"$eq": 1}},
         include=["documents", "metadatas", "distances"],
     )
@@ -48,13 +53,20 @@ for query in TEST_QUERIES:
     metas  = res["metadatas"][0]
     dists  = res["distances"][0]
 
-    print(f"\nTop {len(docs)} san pham tim duoc:")
+    # Loc theo MIN_SCORE
+    candidates = [(doc, meta, 1-dist) for doc, meta, dist in zip(docs, metas, dists)]
+    filtered   = [(doc, meta, sc) for doc, meta, sc in candidates if sc >= MIN_SCORE][:5]
+
+    print(f"\nTop {len(filtered)} san pham phu hop (score >= {MIN_SCORE}) / {len(docs)} ket qua:")
     context_parts = []
-    for i, (doc, meta, dist) in enumerate(zip(docs, metas, dists), 1):
-        score = 1 - dist
+    for i, (doc, meta, score) in enumerate(filtered, 1):
         name_line = doc.split("\n")[0]
         print(f"  [{i}] score={score:.3f} | {name_line} | gia={meta['price']:,.0f} VND")
-        context_parts.append(f"[San pham {i} - do lien quan: {score*100:.0f}%]\n{doc}")
+        context_parts.append(f"[San pham {i} - do phu hop: {score*100:.0f}%]\n{doc}")
+
+    if not filtered:
+        print("  -> Khong tim thay san pham phu hop! (tat ca duoi nguong MIN_SCORE)")
+        context_parts.append("Khong tim thay san pham phu hop voi yeu cau.")
 
     context = "\n\n" + ("-"*40 + "\n\n").join(context_parts)
 

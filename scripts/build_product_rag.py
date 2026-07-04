@@ -48,7 +48,7 @@ PG_SSLMODE  = os.getenv("PG_SSLMODE", "require")
 
 CHROMA_DIR      = ROOT / "chroma_db"
 COLLECTION_NAME = "products"
-EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
+EMBED_MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
 
 
 # ---------------------------------------------------------------------------
@@ -109,7 +109,71 @@ def fetch_products(conn) -> list:
 # ---------------------------------------------------------------------------
 # Document builder
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Keyword aliases de boost recall (tu dong them vao embed_text)
+# ---------------------------------------------------------------------------
+_KEYWORD_ALIASES = [
+    # (pattern_in_name,           alias_to_append)
+    ("2B",              "bút chì 2B ngòi đậm"),
+    ("HB",              "bút chì HB ngòi vừa"),
+    ("4B",              "bút chì 4B ngòi rất đậm"),
+    ("có tẩy",          "bút chì kèm tẩy gôm"),
+    ("gỗ",              "bút chì gỗ lục giác thân gỗ"),
+    ("kim",             "bút chì kim mechanical pencil ngòi 0.5mm"),
+    ("màu",             "bút chì màu color pencil"),
+    ("Oringa",          "bút chì gỗ bạch dương Oringa Hồng Hà"),
+    ("Justice League",  "bút chì gỗ Justice League Hồng Hà"),
+    ("Siliver",         "bút chì gỗ 2B bạc Siliver"),
+    ("ABC",             "bút chì ABC Hồng Hà học sinh"),
+]
+
+
+def build_embed_text(p: dict, cat_map: dict) -> str:
+    """
+    Tao text DANH CHO EMBEDDING, bao gom:
+      - Ten san pham (nguyen ven)
+      - Full category path (khong chi leaf) de tang tinh chinh xac danh muc
+      - Thuong hieu
+      - Toan bo short_description (thong so + dac diem)
+      - Keyword aliases tu ten san pham (2B, HB, co tay, go...) de tang recall
+    KHONG bao gom full_description de tranh semantic dilution.
+    """
+    cat_path = ""
+    if p["category_id"] and p["category_id"] in cat_map:
+        cat_path = cat_map[p["category_id"]]["path"]
+
+    product_name = p["name"] or ""
+    short_desc   = (p.get("short_description") or "").strip()
+    brand        = (p.get("brand") or "").strip()
+
+    parts = [product_name]
+
+    # Full category path (khong chi leaf)
+    if cat_path:
+        parts.append(cat_path)
+
+    # Thuong hieu (neu chua co trong ten)
+    if brand and brand.upper() not in product_name.upper():
+        parts.append(brand)
+
+    # Short description day du (khong cat bot)
+    if short_desc:
+        parts.append(short_desc)
+
+    # Keyword aliases dua tren ten san pham
+    name_upper = product_name.upper()
+    aliases = []
+    for keyword, alias in _KEYWORD_ALIASES:
+        if keyword.upper() in name_upper:
+            aliases.append(alias)
+    if aliases:
+        parts.append(" | ".join(aliases))
+
+    return "\n".join(parts)
+
+
 def build_document(p: dict, cat_map: dict) -> str:
+    """Tao full document de luu vao ChromaDB (hien thi cho LLM)."""
     cat_path = ""
     if p["category_id"] and p["category_id"] in cat_map:
         cat_path = cat_map[p["category_id"]]["path"]
@@ -117,14 +181,25 @@ def build_document(p: dict, cat_map: dict) -> str:
     price_str = f"{int(p['price']):,}".replace(",", ".") + " VND"
     status = "Con hang" if p["availability"] else "Het hang"
 
+    # Ton kho: gia tri 100 la mac dinh cua he thong, khong phan anh thuc te
+    # Chi hien so khi la gia tri thuc (khac 100 va > 0)
+    stock_qty = int(p["stock_quantity"] or 0)
+    if stock_qty == 0:
+        stock_str = "Het hang"
+    elif stock_qty == 100:
+        stock_str = "Con hang"          # an gia tri placeholder 100
+    else:
+        stock_str = f"{stock_qty} san pham"
+
+    product_name = p['name'] or ""
+
     lines = [
-        f"San pham: {p['name']}",
-        f"Ma SKU: {p['sku']}",
+        f"San pham: {product_name}",
         f"Danh muc: {cat_path}" if cat_path else "",
+        f"Ma SKU: {p['sku']}",
         f"Thuong hieu: {p['brand']}" if p.get("brand") else "",
         f"Gia: {price_str}",
-        f"Tinh trang: {status}",
-        f"Ton kho: {p['stock_quantity']}",
+        f"Tinh trang: {status} | Ton kho: {stock_str}",
         "",
         "Mo ta ngan:",
         (p.get("short_description") or "").strip(),
@@ -141,14 +216,26 @@ def build_document(p: dict, cat_map: dict) -> str:
 def build_rag_index(products: list, cat_map: dict, embed_model, chroma_client):
     print(f"\nBat dau embed {len(products)} san pham...")
 
-    documents, metadatas, ids = [], [], []
+    # ── Thong ke availability ──────────────────────────────────────────────
+    available_count = sum(1 for p in products if p["availability"])
+    unavailable_count = len(products) - available_count
+    print(f"  Ket qua: {available_count} san pham con hang, {unavailable_count} het hang.")
+
+    documents, embed_texts, metadatas, ids = [], [], [], []
 
     for p in products:
         cat_path = ""
         if p["category_id"] and p["category_id"] in cat_map:
             cat_path = cat_map[p["category_id"]]["path"]
 
+        # Full document luu vao ChromaDB (hien thi cho LLM)
         documents.append(build_document(p, cat_map))
+
+        # ── FIX: Chi embed text ngan gon (ten + danh muc + brand + short_desc)
+        # Tranh semantic dilution tu full_description dai ──────────────────────
+        embed_text = build_embed_text(p, cat_map)
+        embed_texts.append(embed_text)
+
         metadatas.append({
             "product_id":    int(p["id"]),
             "category_id":   int(p["category_id"]) if p["category_id"] else -1,
@@ -162,9 +249,14 @@ def build_rag_index(products: list, cat_map: dict, embed_model, chroma_client):
         })
         ids.append(f"product_{p['id']}")
 
-    print("  Encoding embeddings...")
+    # In mau embed_text de kiem tra
+    print("\n  [Preview] 3 embed_text dau tien:")
+    for et in embed_texts[:3]:
+        print(f"    ---\n    {et[:200]}")
+
+    print("\n  Encoding embeddings (tu embed_text ngan gon)...")
     embeddings = embed_model.encode(
-        documents,
+        embed_texts,          # ← EMBED BANG TEXT NGAN GON, KHONG PHAI FULL DOCUMENT
         batch_size=64,
         show_progress_bar=True,
         normalize_embeddings=True,
@@ -191,7 +283,7 @@ def build_rag_index(products: list, cat_map: dict, embed_model, chroma_client):
         col.add(
             ids=ids[start:end],
             embeddings=embeddings[start:end],
-            documents=documents[start:end],
+            documents=documents[start:end],   # luu full doc cho LLM
             metadatas=metadatas[start:end],
         )
         print(f"  Luu batch {start+1}-{end} / {len(documents)}")
