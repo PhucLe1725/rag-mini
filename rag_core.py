@@ -36,7 +36,9 @@ CHAT_MODEL = os.getenv("CHAT_MODEL", "glm-5.2")
 
 LOCAL_EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
 COLLECTION_NAME       = "products"
-CHROMA_DIR            = BASE_DIR / "chroma_db"
+# Uu tien bien moi truong CHROMA_DB_PATH (dung khi chay trong Docker voi volume mount)
+# Fallback ve thu muc local "chroma_db/" khi chay truc tiep (backward-compatible)
+CHROMA_DIR            = Path(os.getenv("CHROMA_DB_PATH", str(BASE_DIR / "chroma_db")))
 TOP_K                 = 8
 MIN_SCORE             = 0.30   # Nguong toi thieu — ket qua duoi nguong nay bi loai bo
 

@@ -1,0 +1,26 @@
+# ── Môi trường Python ──────────────────────────────────────────
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+
+# ── Dữ liệu runtime (mount bằng volume, không copy vào image) ──
+chroma_db/
+.cache/
+
+# ── Git & IDE ───────────────────────────────────────────────────
+.git/
+.gitignore
+.idea/
+.vscode/
+
+# ── Tài liệu & markdown (không cần trong container) ────────────
+*.md
+docs/
+
+# ── Biến môi trường (không bao giờ copy vào image) ─────────────
+.env
+.env.*
+!.env.example
